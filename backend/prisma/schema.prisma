@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────
+
+enum EventType {
+  SPORTS
+  FESTIVAL
+  POLITICAL_RALLY
+  CONCERT
+  CONSTRUCTION
+  PROTEST
+  RELIGIOUS
+  OTHER
+}
+
+enum AnalysisStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum RiskLevel {
+  LOW
+  MODERATE
+  HIGH
+  CRITICAL
+}
+
+enum SeverityLevel {
+  NONE
+  MILD
+  MODERATE
+  SEVERE
+  GRIDLOCK
+}
+
+// ─── Models ──────────────────────────────────────────────
+
+model Event {
+  id            String    @id @default(cuid())
+  name          String
+  venue         String
+  eventType     EventType
+  expectedCrowd Int
+  startTime     DateTime
+  endTime       DateTime
+  latitude      Float?
+  longitude     Float?
+  description   String?   @db.Text
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  analyses Analysis[]
+
+  @@index([eventType])
+  @@index([startTime])
+  @@map("events")
+}
+
+model Analysis {
+  id      String         @id @default(cuid())
+  eventId String
+  event   Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  status  AnalysisStatus @default(PENDING)
+
+  // ── Agent 1: Event Intelligence ──
+  eventRiskLevel       RiskLevel?
+  riskScore            Float?
+  arrivalWindowStart   DateTime?
+  arrivalWindowEnd     DateTime?
+  departureWindowStart DateTime?
+  departureWindowEnd   DateTime?
+
+  // ── Agent 2: Traffic Perception ──
+  trafficSnapshot Json?   // { cars, bikes, buses, trucks, density_level, queue_length_meters, average_speed_kmh }
+  videoUrl        String?
+
+  // ── Agent 3: Congestion Prediction ──
+  congestionSeverity   SeverityLevel?
+  peakStartTime        DateTime?
+  peakEndTime          DateTime?
+  impactedCorridors    Json? // string[]
+  predictionConfidence Float?
+  predictionReasoning  String?        @db.Text
+
+  // ── Agent 4: Resource Planning ──
+  officersRequired  Int?
+  barricadesRequired Int?
+  deploymentZones   Json? // string[]
+  patrolPriority    Json? // { zone: string, priority: number }[]
+
+  // ── Agent 5: Diversion Strategy ──
+  diversionRoutes  Json? // { from, to, via, estimatedTime }[]
+  restrictedZones  Json? // string[]
+  advisoryMessages Json? // string[]
+
+  // ── Agent 6: Decision Synthesis ──
+  finalReport     Json?   // Full structured report
+  confidenceScore Float?
+  explanation     String? @db.Text
+
+  // ── Metadata ──
+  pipelineDurationMs Int?
+  errorLog           String? @db.Text
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([eventId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("analyses")
+}

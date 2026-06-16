@@ -1,0 +1,70 @@
+version: "3.8"
+
+services:
+  # ── PostgreSQL Database ──
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartflow-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: smartflow
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Node.js Backend ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smartflow-backend
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/smartflow?schema=public"
+      PORT: "3000"
+      NODE_ENV: production
+      CV_SERVICE_URL: "http://cv-service:8001"
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      MAPBOX_ACCESS_TOKEN: ${MAPBOX_ACCESS_TOKEN:-}
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-cloudinary}
+      CLOUDINARY_URL: ${CLOUDINARY_URL:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ── Python CV Microservice ──
+  cv-service:
+    build:
+      context: ./cv-service
+      dockerfile: Dockerfile
+    container_name: smartflow-cv
+    ports:
+      - "8001:8001"
+    environment:
+      YOLO_MODEL_PATH: weights/yolov8n.pt
+      YOLO_CONFIDENCE_THRESHOLD: "0.5"
+      VIDEO_FRAME_SAMPLE_RATE: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pgdata:
+    driver: local

@@ -1,0 +1,38 @@
+# # Dependencies
+node_modules/
+# dist/
+# .env
+# *.tgz
+
+# # Python
+# venv/
+# __pycache__/
+# *.pyc
+# *.pyo
+# *.egg-info/
+# .eggs/
+
+# # YOLO weights (downloaded at build time)
+# cv-service/weights/*.pt
+
+# # IDE
+# .vscode/
+# .idea/
+# *.swp
+# *.swo
+
+# # OS
+# .DS_Store
+# Thumbs.db
+
+# # Logs
+# *.log
+# logs/
+
+# # Docker
+# .docker/
+
+# # Testing
+# coverage/
+# .pytest_cache/
+# htmlcov/
