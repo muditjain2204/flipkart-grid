@@ -1,4 +1,5 @@
 import { Event } from '@prisma/client';
+import { HistoricalContext } from '../services/historical-data.service';
 
 // ─── Agent Interface ─────────────────────────────────────
 
@@ -17,6 +18,7 @@ export interface EventIntelligenceOutput {
   departureWindowStart: Date;
   departureWindowEnd: Date;
   reasoning: string;
+  historicalInsight?: string;
 }
 
 export interface TrafficPerceptionOutput {
@@ -38,6 +40,7 @@ export interface CongestionPredictionOutput {
   impactedCorridors: string[];
   predictionConfidence: number;
   reasoning: string;
+  historicalInsight?: string;
 }
 
 export interface ResourcePlanningOutput {
@@ -78,6 +81,7 @@ export interface DecisionSynthesisOutput {
 export interface PipelineContext {
   event: Event;
   videoUrl?: string;
+  historicalContext?: HistoricalContext;
   eventIntelligence?: EventIntelligenceOutput;
   trafficPerception?: TrafficPerceptionOutput;
   congestionPrediction?: CongestionPredictionOutput;

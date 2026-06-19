@@ -13,6 +13,7 @@
     "db:push": "prisma db push",
     "db:generate": "prisma generate",
     "db:seed": "ts-node -r tsconfig-paths/register prisma/seed.ts",
+    "db:seed:incidents": "ts-node -r tsconfig-paths/register prisma/seed-incidents.ts",
     "db:studio": "prisma studio",
     "lint": "eslint src/ --ext .ts",
     "lint:fix": "eslint src/ --ext .ts --fix",

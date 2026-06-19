@@ -1,11 +1,13 @@
 import { Agent, EventIntelligenceOutput, TrafficPerceptionOutput, CongestionPredictionOutput } from './index';
 import { SEVERITY_MATRIX, CONGESTION_BUFFER_MINUTES } from '../utils/heuristics';
+import { HistoricalContext, CorridorStats } from '../services/historical-data.service';
 import { logger } from '../config/logger';
 
 interface CongestionInput {
   eventIntelligence: EventIntelligenceOutput;
   trafficPerception: TrafficPerceptionOutput;
   venue: string;
+  historicalContext?: HistoricalContext;
 }
 
 /**
@@ -16,12 +18,15 @@ interface CongestionInput {
  * - Peak congestion window
  * - Impacted road corridors
  * - Confidence score with reasoning
+ *
+ * When historical data is available, uses real corridor names and
+ * incident patterns from the Astram dataset instead of generic heuristics.
  */
 export class CongestionPredictionAgent implements Agent<CongestionInput, CongestionPredictionOutput> {
   name = 'Congestion Prediction Agent';
 
   async execute(input: CongestionInput): Promise<CongestionPredictionOutput> {
-    const { eventIntelligence, trafficPerception, venue } = input;
+    const { eventIntelligence, trafficPerception, venue, historicalContext } = input;
 
     logger.info(`[${this.name}] Predicting congestion for risk=${eventIntelligence.eventRiskLevel}, density=${trafficPerception.densityLevel}`);
 
@@ -40,13 +45,16 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
       eventIntelligence.departureWindowEnd.getTime() + bufferMinutes * 60 * 1000
     );
 
-    // Identify impacted corridors (heuristic: venue-based)
-    const impactedCorridors = this.identifyCorridors(venue, congestionSeverity);
+    // Identify impacted corridors — use historical data if available
+    const impactedCorridors = historicalContext
+      ? this.identifyCorridorsFromHistory(historicalContext, congestionSeverity, venue)
+      : this.identifyCorridorsFallback(venue, congestionSeverity);
 
-    // Calculate confidence score
+    // Calculate confidence score — boosted by historical data
     const predictionConfidence = this.calculateConfidence(
       eventIntelligence,
-      trafficPerception
+      trafficPerception,
+      historicalContext
     );
 
     // Generate reasoning
@@ -56,6 +64,11 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
       congestionSeverity,
       predictionConfidence
     );
+
+    // Generate historical insight
+    const historicalInsight = historicalContext
+      ? this.generateHistoricalInsight(historicalContext, congestionSeverity)
+      : undefined;
 
     logger.info(
       `[${this.name}] Prediction: severity=${congestionSeverity}, ` +
@@ -70,16 +83,65 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
       impactedCorridors,
       predictionConfidence,
       reasoning,
+      historicalInsight,
     };
   }
 
   /**
-   * Identify likely impacted corridors based on venue name.
-   * In production, this would use geospatial queries + Mapbox.
-   * For the hackathon, we generate reasonable corridors from the venue.
+   * Identify impacted corridors from real historical incident data.
+   * Uses corridors found near the event venue, ranked by incident count.
    */
-  private identifyCorridors(venue: string, severity: string): string[] {
-    // Extract city/area keywords from venue
+  private identifyCorridorsFromHistory(
+    context: HistoricalContext,
+    severity: string,
+    venue: string
+  ): string[] {
+    const corridors: string[] = [];
+
+    // Sort corridor stats by incident count (highest risk first)
+    const sortedCorridors = [...context.corridorStats]
+      .sort((a, b) => b.totalIncidents - a.totalIncidents);
+
+    // For severe/gridlock, include more corridors
+    const maxCorridors = severity === 'GRIDLOCK' ? 6 : severity === 'SEVERE' ? 4 : 3;
+
+    for (const cs of sortedCorridors.slice(0, maxCorridors)) {
+      if (cs.corridor && cs.corridor !== 'Non-corridor') {
+        corridors.push(cs.corridor);
+      }
+    }
+
+    // Also add corridors from nearby incidents if not already included
+    if (corridors.length < 2) {
+      for (const c of context.nearbyIncidents.corridors) {
+        if (c !== 'Non-corridor' && !corridors.includes(c)) {
+          corridors.push(c);
+          if (corridors.length >= maxCorridors) break;
+        }
+      }
+    }
+
+    // If historical data doesn't give us corridors, fall back
+    if (corridors.length === 0) {
+      return this.identifyCorridorsFallback(venue, severity);
+    }
+
+    // Add hotspot junctions as supplementary info
+    if (severity === 'GRIDLOCK' || severity === 'SEVERE') {
+      for (const hs of context.hotspots.slice(0, 3)) {
+        const label = `${hs.junction} junction (${hs.totalIncidents} past incidents)`;
+        corridors.push(label);
+      }
+    }
+
+    return corridors;
+  }
+
+  /**
+   * Fallback corridor identification when no historical data is available.
+   * Uses venue name to generate reasonable corridor names.
+   */
+  private identifyCorridorsFallback(venue: string, severity: string): string[] {
     const baseCorridor = `Main approach road to ${venue}`;
     const corridors: string[] = [baseCorridor];
 
@@ -101,10 +163,12 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
 
   /**
    * Calculate prediction confidence based on data availability and event type uncertainty.
+   * Historical data availability significantly boosts confidence.
    */
   private calculateConfidence(
     eventIntelligence: EventIntelligenceOutput,
-    trafficPerception: TrafficPerceptionOutput
+    trafficPerception: TrafficPerceptionOutput,
+    historicalContext?: HistoricalContext
   ): number {
     let confidence = 0.7; // Base confidence
 
@@ -118,6 +182,21 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
       confidence += 0.05;
     }
 
+    // Historical data boosts confidence significantly
+    if (historicalContext) {
+      const nearby = historicalContext.nearbyIncidents;
+      if (nearby.totalIncidents > 50) {
+        confidence += 0.1; // Rich historical data
+      } else if (nearby.totalIncidents > 10) {
+        confidence += 0.05;
+      }
+
+      // Corridor-level data adds further confidence
+      if (historicalContext.corridorStats.length > 0) {
+        confidence += 0.05;
+      }
+    }
+
     // High-uncertainty event types reduce confidence
     if (
       eventIntelligence.eventRiskLevel === 'CRITICAL' &&
@@ -128,6 +207,45 @@ export class CongestionPredictionAgent implements Agent<CongestionInput, Congest
 
     // Clamp between 0.3 and 0.95
     return Math.max(0.3, Math.min(0.95, confidence));
+  }
+
+  /**
+   * Generate historical insight string for the prediction.
+   */
+  private generateHistoricalInsight(context: HistoricalContext, severity: string): string {
+    const parts: string[] = [];
+    const nearby = context.nearbyIncidents;
+
+    if (nearby.totalIncidents > 0) {
+      parts.push(
+        `Historical data: ${nearby.totalIncidents} past incidents recorded in this area.`
+      );
+
+      if (nearby.avgResolutionMinutes) {
+        parts.push(
+          `Average incident resolution: ${nearby.avgResolutionMinutes} min.`
+        );
+      }
+
+      // Corridor-specific insights
+      for (const cs of context.corridorStats.slice(0, 2)) {
+        const topCause = cs.topCauses[0];
+        parts.push(
+          `${cs.corridor}: ${cs.totalIncidents} incidents` +
+          (topCause ? `, primarily ${topCause.cause.toLowerCase().replace(/_/g, ' ')}` : '') +
+          (cs.roadClosurePercentage > 10 ? `, ${cs.roadClosurePercentage}% required road closure` : '') +
+          '.'
+        );
+      }
+    }
+
+    if (context.hotspots.length > 0) {
+      parts.push(
+        `High-risk junctions nearby: ${context.hotspots.slice(0, 3).map(h => `${h.junction} (${h.totalIncidents} incidents)`).join(', ')}.`
+      );
+    }
+
+    return parts.join(' ');
   }
 
   private generateReasoning(

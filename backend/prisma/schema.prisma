@@ -118,3 +118,75 @@ model Analysis {
   @@index([createdAt])
   @@map("analyses")
 }
+
+// ─── Traffic Incident Enums ─────────────────────────────
+
+enum IncidentType {
+  PLANNED
+  UNPLANNED
+}
+
+enum IncidentCause {
+  VEHICLE_BREAKDOWN
+  ACCIDENT
+  CONSTRUCTION
+  WATER_LOGGING
+  TREE_FALL
+  POT_HOLES
+  CONGESTION
+  PUBLIC_EVENT
+  PROCESSION
+  VIP_MOVEMENT
+  PROTEST
+  ROAD_CONDITIONS
+  DEBRIS
+  FOG_LOW_VISIBILITY
+  OTHERS
+  TEST_DEMO
+}
+
+enum IncidentStatus {
+  ACTIVE
+  CLOSED
+  RESOLVED
+}
+
+enum IncidentPriority {
+  HIGH
+  LOW
+}
+
+// ─── Historical Traffic Incident Model ──────────────────
+
+model TrafficIncident {
+  id                  String           @id
+  incidentType        IncidentType
+  cause               IncidentCause
+  latitude            Float
+  longitude           Float
+  endLatitude         Float?
+  endLongitude        Float?
+  address             String           @db.Text
+  endAddress          String?          @db.Text
+  requiresRoadClosure Boolean          @default(false)
+  startDatetime       DateTime
+  endDatetime         DateTime?
+  status              IncidentStatus
+  priority            IncidentPriority
+  description         String?          @db.Text
+  vehicleType         String?
+  vehicleNo           String?
+  corridor            String?
+  policeStation       String?
+  zone                String?
+  junction            String?
+  resolutionMinutes   Int?
+  createdAt           DateTime         @default(now())
+
+  @@index([cause])
+  @@index([corridor])
+  @@index([zone])
+  @@index([latitude, longitude])
+  @@index([startDatetime])
+  @@map("traffic_incidents")
+}
