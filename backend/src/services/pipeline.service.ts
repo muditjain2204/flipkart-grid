@@ -7,16 +7,21 @@ import { CongestionPredictionAgent } from '../agents/congestion-prediction.agent
 import { ResourcePlanningAgent } from '../agents/resource-planning.agent';
 import { DiversionStrategyAgent } from '../agents/diversion-strategy.agent';
 import { DecisionSynthesisAgent } from '../agents/decision-synthesis.agent';
+import { HistoricalDataService } from './historical-data.service';
 
 /**
  * Pipeline Service
  *
  * Orchestrates the multi-agent analysis pipeline:
- *   Agent 1 (Event Intel) → Agent 2 (Traffic CV) → Agent 3 (Congestion)
- *   → [Agent 4 (Resources) || Agent 5 (Diversions)] → Agent 6 (Synthesis)
+ *   [Historical Data Fetch] → Agent 1 (Event Intel) → Agent 2 (Traffic CV)
+ *   → Agent 3 (Congestion) → [Agent 4 (Resources) || Agent 5 (Diversions)]
+ *   → Agent 6 (Synthesis)
  *
  * Agents 4 and 5 run in parallel since they're independent of each other.
  * The pipeline updates the Analysis record at each step.
+ *
+ * Historical data from the Astram dataset is fetched once at pipeline start
+ * and passed to Agents 1, 3, and 4 to enrich their predictions.
  */
 export class PipelineService {
   private eventIntelAgent = new EventIntelligenceAgent();
@@ -25,6 +30,7 @@ export class PipelineService {
   private resourcePlanningAgent = new ResourcePlanningAgent();
   private diversionStrategyAgent = new DiversionStrategyAgent();
   private decisionSynthesisAgent = new DecisionSynthesisAgent();
+  private historicalDataService = new HistoricalDataService();
 
   /**
    * Run the full multi-agent pipeline for a given analysis.
@@ -45,9 +51,33 @@ export class PipelineService {
 
       logger.info(`🚀 Pipeline started for analysis ${analysisId} — event: "${event.name}"`);
 
+      // ── Pre-step: Fetch Historical Context ──
+      let historicalContext;
+      if (event.latitude && event.longitude) {
+        logger.info(`[Pipeline] Fetching historical context for location (${event.latitude}, ${event.longitude})...`);
+        try {
+          historicalContext = await this.historicalDataService.getContextForLocation(
+            event.latitude,
+            event.longitude,
+            3 // 3km radius
+          );
+          logger.info(
+            `[Pipeline] Historical context: ${historicalContext.nearbyIncidents.totalIncidents} nearby incidents, ` +
+            `${historicalContext.corridorStats.length} corridors, ${historicalContext.hotspots.length} hotspots`
+          );
+        } catch (histError) {
+          logger.warn(`[Pipeline] Failed to fetch historical data, continuing without it: ${histError}`);
+        }
+      } else {
+        logger.info(`[Pipeline] No lat/lng available for event, skipping historical data lookup.`);
+      }
+
       // ── Agent 1: Event Intelligence ──
       logger.info(`[Pipeline] Running Agent 1: Event Intelligence...`);
-      const eventIntelligence = await this.eventIntelAgent.execute(event);
+      const eventIntelligence = await this.eventIntelAgent.execute({
+        event,
+        historicalContext,
+      });
 
       await prisma.analysis.update({
         where: { id: analysisId },
@@ -79,6 +109,7 @@ export class PipelineService {
         eventIntelligence,
         trafficPerception,
         venue: event.venue,
+        historicalContext,
       });
 
       await prisma.analysis.update({
@@ -99,6 +130,7 @@ export class PipelineService {
         this.resourcePlanningAgent.execute({
           congestion: congestionPrediction,
           event,
+          historicalContext,
         }),
         this.diversionStrategyAgent.execute({
           congestion: congestionPrediction,

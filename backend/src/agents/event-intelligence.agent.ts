@@ -2,6 +2,7 @@ import { Event } from '@prisma/client';
 import { Agent, EventIntelligenceOutput } from './index';
 import { calculateRisk } from '../utils/risk-calculator';
 import { ARRIVAL_WINDOW_OFFSETS, DEPARTURE_WINDOW_OFFSETS } from '../utils/heuristics';
+import { HistoricalContext, NearbyIncidentSummary } from '../services/historical-data.service';
 import { logger } from '../config/logger';
 
 /**
@@ -13,11 +14,14 @@ import { logger } from '../config/logger';
  * - Expected departure window (when crowds will disperse)
  *
  * Uses heuristic rules based on event type, crowd size, and timing.
+ * When historical data is available, enriches reasoning with real
+ * incident statistics from the Astram dataset.
  */
-export class EventIntelligenceAgent implements Agent<Event, EventIntelligenceOutput> {
+export class EventIntelligenceAgent implements Agent<{ event: Event; historicalContext?: HistoricalContext }, EventIntelligenceOutput> {
   name = 'Event Intelligence Agent';
 
-  async execute(event: Event): Promise<EventIntelligenceOutput> {
+  async execute(input: { event: Event; historicalContext?: HistoricalContext }): Promise<EventIntelligenceOutput> {
+    const { event, historicalContext } = input;
     logger.info(`[${this.name}] Analyzing event: ${event.name} (${event.eventType})`);
 
     // Calculate risk level
@@ -26,6 +30,17 @@ export class EventIntelligenceAgent implements Agent<Event, EventIntelligenceOut
       event.eventType,
       event.startTime
     );
+
+    // Adjust risk score based on historical incident density
+    let adjustedRiskScore = riskScore;
+    if (historicalContext && historicalContext.nearbyIncidents.totalIncidents > 0) {
+      const incidentDensityFactor = this.getHistoricalRiskAdjustment(historicalContext.nearbyIncidents);
+      adjustedRiskScore = Math.round(riskScore * incidentDensityFactor);
+      logger.info(
+        `[${this.name}] Risk adjusted by historical factor: ${incidentDensityFactor.toFixed(2)} ` +
+        `(${historicalContext.nearbyIncidents.totalIncidents} nearby incidents)`
+      );
+    }
 
     // Calculate arrival window
     const arrivalOffsets = ARRIVAL_WINDOW_OFFSETS[event.eventType];
@@ -46,22 +61,91 @@ export class EventIntelligenceAgent implements Agent<Event, EventIntelligenceOut
     );
 
     // Generate reasoning
-    const reasoning = this.generateReasoning(event, riskLevel, riskScore);
+    const reasoning = this.generateReasoning(event, riskLevel, adjustedRiskScore);
+
+    // Generate historical insight
+    const historicalInsight = historicalContext
+      ? this.generateHistoricalInsight(historicalContext)
+      : undefined;
 
     logger.info(
-      `[${this.name}] Result: Risk=${riskLevel} (score=${riskScore}), ` +
+      `[${this.name}] Result: Risk=${riskLevel} (score=${adjustedRiskScore}), ` +
       `Arrival=${arrivalWindowStart.toISOString()} to ${arrivalWindowEnd.toISOString()}`
     );
 
     return {
       eventRiskLevel: riskLevel,
-      riskScore,
+      riskScore: adjustedRiskScore,
       arrivalWindowStart,
       arrivalWindowEnd,
       departureWindowStart,
       departureWindowEnd,
       reasoning,
+      historicalInsight,
     };
+  }
+
+  /**
+   * Calculate a risk adjustment factor based on historical incident density.
+   * More past incidents near the location = higher risk.
+   */
+  private getHistoricalRiskAdjustment(nearby: NearbyIncidentSummary): number {
+    let factor = 1.0;
+
+    // High incident areas get a risk boost
+    if (nearby.totalIncidents > 50) {
+      factor += 0.3;
+    } else if (nearby.totalIncidents > 20) {
+      factor += 0.15;
+    } else if (nearby.totalIncidents > 5) {
+      factor += 0.05;
+    }
+
+    // High priority percentage increases risk
+    if (nearby.highPriorityPercentage > 70) {
+      factor += 0.15;
+    } else if (nearby.highPriorityPercentage > 50) {
+      factor += 0.1;
+    }
+
+    return factor;
+  }
+
+  /**
+   * Generate human-readable insight from historical data.
+   */
+  private generateHistoricalInsight(context: HistoricalContext): string {
+    const parts: string[] = [];
+    const nearby = context.nearbyIncidents;
+
+    if (nearby.totalIncidents > 0) {
+      parts.push(
+        `Historical analysis: ${nearby.totalIncidents} traffic incidents recorded within 3km of this venue.`
+      );
+
+      if (nearby.topCauses.length > 0) {
+        const causeStr = nearby.topCauses
+          .slice(0, 3)
+          .map((c) => `${c.cause.toLowerCase().replace(/_/g, ' ')} (${c.count})`)
+          .join(', ');
+        parts.push(`Most common causes: ${causeStr}.`);
+      }
+
+      if (nearby.avgResolutionMinutes) {
+        parts.push(`Average incident resolution time in this area: ${nearby.avgResolutionMinutes} minutes.`);
+      }
+
+      if (nearby.corridors.length > 0) {
+        parts.push(`Known traffic corridors nearby: ${nearby.corridors.join(', ')}.`);
+      }
+    }
+
+    if (context.hotspots.length > 0) {
+      const hotspotNames = context.hotspots.slice(0, 3).map((h) => h.junction);
+      parts.push(`Nearby hotspot junctions: ${hotspotNames.join(', ')}.`);
+    }
+
+    return parts.join(' ');
   }
 
   private generateReasoning(event: Event, riskLevel: string, riskScore: number): string {
