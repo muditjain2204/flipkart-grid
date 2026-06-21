@@ -23,7 +23,7 @@ RUN npm ci --omit=dev --legacy-peer-deps
 
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY prisma/ ./prisma/
+COPY --from=builder /app/prisma ./prisma
 
 # Create uploads directory
 RUN mkdir -p uploads
