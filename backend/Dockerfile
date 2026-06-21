@@ -3,14 +3,14 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --legacy-peer-deps
 
-COPY tsconfig.json ./
-COPY prisma/ ./prisma/
+COPY backend/tsconfig.json ./
+COPY backend/prisma/ ./prisma/
 RUN npx prisma generate
 
-COPY src/ ./src/
+COPY backend/src/ ./src/
 RUN npm run build
 
 # ── Production Stage ──
@@ -18,7 +18,7 @@ FROM node:18-alpine
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY backend/package*.json ./
 RUN npm ci --omit=dev --legacy-peer-deps
 
 COPY --from=builder /app/dist ./dist
