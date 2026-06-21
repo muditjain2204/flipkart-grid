@@ -5,8 +5,8 @@ import Navigation from "@/components/Navigation";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
-export default function FeaturePage({ params }: { params: { slug: string } }) {
-  const { slug } = params;
+export default function FeaturePage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = React.use(params);
 
   // Mock data mapping based on slug
   const featureContent: Record<string, { title: string, desc: string, icon: string }> = {
